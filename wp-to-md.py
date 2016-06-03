@@ -1,4 +1,5 @@
 import sys
+import os
 import io
 import time
 import datetime
@@ -26,12 +27,13 @@ coderegex3 = re.compile(r'\[code lang=[a-zA-Z0-9]*\](.*?)\[\/code\]', re.DOTALL)
 
 class Post:
 
-	def __init__(self, title, link, date, content, category):
+	def __init__(self, title, link, date, content, category, status):
 		self.title = title
 		self.link = link
 		self.date = dateutil.parser.parse(date)
 		self.content = content
 		self.category = category
+		self.status = status
 
 
 def load_doc(filename):
@@ -61,7 +63,8 @@ def parse_doc(doc):
 				item.find('link').string,
 				item.find('wp:post_date').string,
 				item.find('content:encoded').string,
-				item.find('category')['nicename']))
+				item.find('category')['nicename'],
+				item.find('wp:status').string))
 
 		elif item.find('wp:post_type').string == "attachment":
 			attachments.append(item.guid.string)
@@ -70,6 +73,11 @@ def parse_doc(doc):
 
 
 def gen_markdown(post):
+
+	h = html2text.HTML2Text()
+	h.unicode_snob = 1
+	h.body_width = 0
+	h.dash_unordered_list = True
 
 	title = post.title.translate(str.maketrans({"\"": "&#34;", ":": "&#58;"}))
 	body = post.content
@@ -82,28 +90,42 @@ categories: %s
 ---
 """%(title, post.date.strftime("%Y-%m-%d %H:%M:%S"), post.category)
 
-	body = re.sub(coderegex1, r"```\n\1```", body, re.U)
-	body = re.sub(coderegex2, r"```\n\1```", body, re.U)
-	body = re.sub(coderegex3, r"```\n\1```", body, re.U)
+	body = re.sub(coderegex1, r"<pre>\1</pre>", body, re.U)
+	body = re.sub(coderegex2, r"<pre>\1</pre>", body, re.U)
+	body = re.sub(coderegex3, r"<pre>\1</pre>", body, re.U)
 
-	# need an alternative, this automatically wraps content to col 80
-	#body = html2text.html2text(body)
+	body = h.handle(body)
 
 	return header + body
 
 
-def save_posts(posts):
+def save_posts(output, posts):
 
 	print("> Saving posts!")
 
 	out = ""
+	directory = ""
 
 	for p in posts:
-		with io.open("_posts/" + p.date.strftime("%Y-%m-%d") + "-" + slugify(p.title) + ".markdown", 'w', encoding='UTF-8') as f:
+		if p.status == "publish":
+			directory = output + "_posts/"
+
+		elif p.status == "draft":
+			directory = output + "_drafts/"
+
+		else:
+			directory = output + "_other/"
+
+		if not os.path.exists(directory):
+			os.makedirs(directory)
+
+		print("Saving", directory + p.date.strftime("%Y-%m-%d") + "-" + slugify(p.title) + ".markdown")
+
+		with io.open(directory + p.date.strftime("%Y-%m-%d") + "-" + slugify(p.title) + ".markdown", 'w', encoding='UTF-8') as f:
 			f.write(gen_markdown(p))
 
 
-def download_attachments(attachments):
+def download_attachments(output, attachments):
 
 	print("> Wget'ing attachments!")
 	# todo
@@ -111,11 +133,19 @@ def download_attachments(attachments):
 
 def main():
 
-	if len(sys.argv) != 2:
-		print("Parameters: filename for wordpress .xml export file")
+	output = "./"
+
+	if len(sys.argv) == 1:
+		print("Parameters: filename for wordpress .xml export file, optional output directory")
 		return
 
-	filename = sys.argv[1]
+	elif len(sys.argv) == 2:
+		filename = sys.argv[1]
+
+	elif len(sys.argv) == 3:
+		filename = sys.argv[1]
+		output = sys.argv[2]
+
 	doc = ""
 	posts = []
 	attachments = []
@@ -123,8 +153,8 @@ def main():
 	doc = load_doc(filename)
 	posts, attachments = parse_doc(doc)
 
-	save_posts(posts)
-	download_attachments(attachments)
+	save_posts(output, posts)
+	download_attachments(output, attachments)
 
 
 if __name__ == '__main__':
